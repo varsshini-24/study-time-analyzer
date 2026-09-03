@@ -1,14 +1,25 @@
-import sqlite3
 import os
+import sqlite3
 
-# Database location
-DATABASE_PATH = os.path.join("data", "study.db")
+# Get the folder where this Python project is located
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Database folder and file
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DATABASE_PATH = os.path.join(DATA_DIR, "study.db")
+
+
+def get_connection():
+    """Create and return a SQLite database connection."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    return sqlite3.connect(DATABASE_PATH)
 
 
 def create_database():
-    os.makedirs("data", exist_ok=True)
+    """Create the study_sessions table if it does not exist."""
+    os.makedirs(DATA_DIR, exist_ok=True)
 
-    connection = sqlite3.connect(DATABASE_PATH)
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -43,7 +54,9 @@ def add_session(
     focus_rating,
     test_score
 ):
-    connection = sqlite3.connect(DATABASE_PATH)
+    """Add a new study session to the database."""
+
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -76,18 +89,19 @@ def add_session(
     connection.commit()
     connection.close()
 
-    print("Study session added successfully!")
-
 
 def get_all_sessions():
-    connection = sqlite3.connect(DATABASE_PATH)
+    """Return all study sessions, newest first."""
 
+    create_database()
+
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("""
         SELECT *
         FROM study_sessions
-        ORDER BY date DESC
+        ORDER BY date DESC, id DESC
     """)
 
     sessions = cursor.fetchall()
@@ -100,21 +114,5 @@ def get_all_sessions():
 if __name__ == "__main__":
     create_database()
 
-    add_session(
-        "2026-09-02",
-        "Python",
-        "18:00",
-        "20:00",
-        2.0,
-        15,
-        10,
-        "Practice",
-        4,
-        82
-    )
-
-    sessions = get_all_sessions()
-
-    print("\nStudy Sessions:")
-    for session in sessions:
-        print(session)
+    print("Database created successfully!")
+    print(f"Database location: {DATABASE_PATH}")
