@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python tools
+.pytest_cache/
+.mypy_cache/
+
+# Local database
+# Keep study.db locally if you want to preserve your data.
+# Uncomment the next line if the database should NOT be committed.
+# data/study.db
+
+# Temporary files
+*.tmp
+*.log
