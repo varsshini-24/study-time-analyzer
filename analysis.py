@@ -268,10 +268,7 @@ def distraction_score_analysis(df):
 
 
 def daily_analysis(df):
-    if df.empty:
-        return pd.DataFrame()
-
-    return (
+    result = (
         df.groupby("date")
         .agg(
             study_hours=("study_duration", "sum"),
@@ -282,9 +279,18 @@ def daily_analysis(df):
         )
         .reset_index()
         .sort_values("date")
-        .round(2)
     )
 
+    numeric_columns = [
+        "study_hours",
+        "average_focus",
+        "average_score",
+        "distraction",
+        "sessions",
+    ]
+    result[numeric_columns] = result[numeric_columns].round(2)
+
+    return result
 
 def progress_analysis(df):
     daily = daily_analysis(df)
