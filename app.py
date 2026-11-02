@@ -1,8 +1,13 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+import plotly.express as px
+import io
+from datetime import datetime, date, timedelta
 
-from database import create_database, add_session, get_all_sessions
+from database import (
+    create_database, add_session, get_all_sessions,
+    get_weekly_goals, save_weekly_goal, delete_weekly_goal,
+)
 from analysis import (
     load_data,
     clean_data,
@@ -295,6 +300,395 @@ hr { border-color: rgba(255,255,255,.07); }
     .page-title { font-size: 26px; }
     .topbar { flex-direction: column; }
 }
+
+/* StudyFlow premium refresh: restrained glass surfaces, clearer hierarchy */
+:root {
+    color-scheme: dark;
+    --sf-bg: #090d16;
+    --sf-surface: rgba(18, 25, 39, .88);
+    --sf-border: rgba(148, 163, 184, .14);
+    --sf-muted: #8d9bb0;
+    --sf-purple: #a78bfa;
+    --sf-blue: #60a5fa;
+}
+
+.stApp {
+    background:
+        radial-gradient(ellipse at 82% 2%, rgba(124, 58, 237, .16), transparent 34%),
+        radial-gradient(ellipse at 2% 52%, rgba(37, 99, 235, .09), transparent 30%),
+        linear-gradient(145deg, #090d16 0%, #0b1120 55%, #090d16 100%);
+}
+
+.block-container { padding-top: 2.2rem; }
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, rgba(17, 24, 39, .98), rgba(9, 13, 22, .98));
+    border-right: 1px solid var(--sf-border);
+}
+.brand-icon {
+    background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+    box-shadow: 0 8px 28px rgba(124, 58, 237, .32), inset 0 1px 0 rgba(255,255,255,.18);
+}
+.brand-name { letter-spacing: -.35px; }
+.brand-sub { letter-spacing: 1.55px; }
+
+.topbar {
+    align-items: center;
+    padding: 0 0 22px;
+    border-bottom: 1px solid rgba(148, 163, 184, .12);
+    margin-bottom: 25px;
+}
+.eyebrow { color: #a78bfa; letter-spacing: 1.8px; }
+.page-title { letter-spacing: -1.2px; line-height: 1.12; }
+.page-subtitle { max-width: 720px; line-height: 1.7; }
+.date-pill {
+    white-space: nowrap;
+    background: rgba(17, 24, 39, .78);
+    border-color: rgba(148, 163, 184, .16);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+}
+
+.card, .insight, div[data-testid="stMetric"] {
+    background: linear-gradient(145deg, rgba(22, 30, 46, .94), rgba(13, 19, 31, .96));
+    border: 1px solid var(--sf-border);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .13), inset 0 1px 0 rgba(255,255,255,.025);
+    transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.card { border-radius: 18px; }
+.insight { border-radius: 16px; }
+.card:hover, .insight:hover {
+    border-color: rgba(167, 139, 250, .28);
+    box-shadow: 0 16px 38px rgba(0,0,0,.18), 0 0 0 1px rgba(167,139,250,.025);
+}
+.kpi { min-height: 138px; position: relative; overflow: hidden; }
+.kpi:after {
+    content: ""; position: absolute; top: -35px; right: -30px;
+    width: 90px; height: 90px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(139,92,246,.12), transparent 72%);
+    pointer-events: none;
+}
+.kpi-icon { margin-bottom: 15px; }
+.kpi-value { font-size: clamp(22px, 2vw, 29px); letter-spacing: -1px; }
+.kpi-label { font-size: 11px; letter-spacing: .15px; }
+.section-heading { margin-top: 31px; margin-bottom: 14px; letter-spacing: -.25px; }
+.insight { min-height: 112px; }
+.insight-title { font-size: 12px; }
+.insight-text { font-size: 11px; }
+
+/* Navigation and form controls */
+div[data-testid="stSidebar"] div[role="radiogroup"] label {
+    border: 1px solid transparent;
+    transition: background .15s ease, border-color .15s ease;
+}
+div[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+    background: rgba(139, 92, 246, .11);
+    border-color: rgba(139, 92, 246, .12);
+}
+.stButton > button, .stDownloadButton > button, button[kind="primary"] {
+    min-height: 42px;
+    border-radius: 11px;
+    border: 1px solid rgba(167, 139, 250, .30);
+    background: linear-gradient(115deg, #7c3aed, #315fce);
+    box-shadow: 0 7px 20px rgba(79, 70, 229, .13);
+}
+.stButton > button:focus, .stDownloadButton > button:focus {
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, .2);
+}
+input, textarea { caret-color: #a78bfa; }
+
+/* Plotly charts blend into the dashboard instead of appearing as white panels */
+div[data-testid="stPlotlyChart"] {
+    border-radius: 12px;
+    overflow: hidden;
+}
+div[data-testid="stDataFrame"] { border-color: var(--sf-border); }
+.stTabs [data-baseweb="tab-list"] { gap: 6px; border-bottom-color: var(--sf-border); }
+.stTabs [data-baseweb="tab"] { border-radius: 9px 9px 0 0; padding: 9px 13px; }
+.stTabs [aria-selected="true"] { color: #c4b5fd !important; }
+.stAlert { border: 1px solid var(--sf-border); }
+.sidebar-footer { background: rgba(255,255,255,.015); }
+
+@media (max-width: 900px) {
+    .block-container { padding: 18px 14px 32px; }
+    .page-title { font-size: 27px; }
+    .kpi { min-height: 118px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+/* ============================================================
+   STUDYFLOW SIDEBAR — PREMIUM NAVIGATION OVERRIDE
+   Added after the existing styles so it takes priority.
+============================================================ */
+
+section[data-testid="stSidebar"] {
+    background:
+        radial-gradient(circle at 10% 0%, rgba(124, 58, 237, .12), transparent 34%),
+        linear-gradient(180deg, #101727 0%, #0b1120 58%, #090e18 100%) !important;
+    border-right: 1px solid rgba(148, 163, 184, .14) !important;
+}
+
+section[data-testid="stSidebar"] > div {
+    padding: 26px 16px 22px !important;
+}
+
+/* Brand block */
+section[data-testid="stSidebar"] .brand {
+    gap: 13px;
+    padding: 8px 8px 30px;
+}
+
+section[data-testid="stSidebar"] .brand-icon {
+    width: 46px;
+    height: 46px;
+    flex-shrink: 0;
+    border-radius: 15px;
+    font-size: 22px;
+    background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+    box-shadow: 0 8px 25px rgba(124, 58, 237, .28),
+                inset 0 1px 0 rgba(255, 255, 255, .16);
+}
+
+section[data-testid="stSidebar"] .brand-name {
+    color: #f8fafc;
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: -.45px;
+}
+
+section[data-testid="stSidebar"] .brand-sub {
+    color: #8795ad;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    margin-top: 4px;
+}
+
+section[data-testid="stSidebar"] .nav-label {
+    color: #7787a1;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.7px;
+    margin: 0 10px 13px;
+}
+
+/* Navigation group */
+section[data-testid="stSidebar"] div[role="radiogroup"] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px !important;
+}
+
+/* Each navigation item */
+section[data-testid="stSidebar"] div[role="radiogroup"] label {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 !important;
+    padding: 11px 12px !important;
+    border: 1px solid transparent !important;
+    border-radius: 11px !important;
+    background: transparent !important;
+    color: #aab6ca !important;
+    cursor: pointer;
+    transition: background .18s ease, border-color .18s ease, color .18s ease;
+}
+
+/* Hide the radio control/circle, keeping the label clickable */
+section[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {
+    display: none !important;
+}
+
+/* Let the text use the full navigation width */
+section[data-testid="stSidebar"] div[role="radiogroup"] label > div:last-child {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label p {
+    color: inherit !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    line-height: 1.45 !important;
+    margin: 0 !important;
+}
+
+/* Hover state */
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+    background: rgba(139, 92, 246, .10) !important;
+    border-color: rgba(167, 139, 250, .16) !important;
+    color: #f8fafc !important;
+}
+
+/* Active item */
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+    background: linear-gradient(
+        100deg,
+        rgba(124, 58, 237, .24),
+        rgba(59, 130, 246, .11)
+    ) !important;
+    border-color: rgba(167, 139, 250, .25) !important;
+    box-shadow: inset 3px 0 0 #a78bfa !important;
+    color: #ffffff !important;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p {
+    color: #ffffff !important;
+    font-weight: 700 !important;
+}
+
+/* Footer card */
+section[data-testid="stSidebar"] .sidebar-footer {
+    margin: 32px 3px 0 !important;
+    padding: 15px !important;
+    border: 1px solid rgba(148, 163, 184, .13) !important;
+    border-radius: 14px !important;
+    background: linear-gradient(145deg, rgba(255,255,255,.035), rgba(255,255,255,.012)) !important;
+    color: #8795aa !important;
+    font-size: 10px !important;
+    line-height: 1.75 !important;
+}
+
+section[data-testid="stSidebar"] .sidebar-footer b {
+    color: #e2e8f0 !important;
+    font-size: 12px !important;
+}
+
+/* Keep sidebar polished on smaller screens */
+@media (max-width: 768px) {
+    section[data-testid="stSidebar"] > div {
+        padding: 20px 12px !important;
+    }
+
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {
+        padding: 10px 10px !important;
+    }
+}
+/* Remove Streamlit radio circles and their reserved space */
+section[data-testid="stSidebar"]
+div[data-testid="stRadio"] div[role="radiogroup"] label
+> div:first-child {
+    display: none !important;
+}
+
+/* Make navigation items fill the sidebar width */
+section[data-testid="stSidebar"]
+div[data-testid="stRadio"] div[role="radiogroup"] label {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 10px 12px !important;
+    margin: 3px 0 !important;
+    border-radius: 10px !important;
+}
+
+/* Keep navigation text aligned */
+section[data-testid="stSidebar"]
+div[data-testid="stRadio"] div[role="radiogroup"] label > div:last-child {
+    margin-left: 0 !important;
+    padding-left: 0 !important;
+}
+
+/* Highlight the selected page */
+section[data-testid="stSidebar"]
+div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) {
+    background: rgba(139, 92, 246, 0.18) !important;
+    border: 1px solid rgba(167, 139, 250, 0.3) !important;
+    box-shadow: inset 3px 0 0 #a78bfa !important;
+}
+/* ===== FIX STUDYFLOW DASHBOARD WIDTH ===== */
+
+/* Keep the sidebar at a reasonable width */
+section[data-testid="stSidebar"] {
+    min-width: 235px !important;
+    max-width: 235px !important;
+}
+
+/* Restore the main content area */
+section[data-testid="stMain"] > div {
+    max-width: 100% !important;
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+}
+
+/* Prevent dashboard metric cards from becoming too narrow */
+div[data-testid="stMetric"] {
+    min-width: 0 !important;
+    width: 100% !important;
+}
+
+div[data-testid="stMetricValue"] {
+    font-size: clamp(1.2rem, 1.8vw, 2rem) !important;
+    white-space: nowrap !important;
+}
+
+/* Keep chart containers responsive */
+div[data-testid="stPlotlyChart"] {
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+/* Avoid horizontal overflow */
+.stApp {
+    overflow-x: hidden;
+}
+
+/* Keep sidebar navigation tidy */
+section[data-testid="stSidebar"]
+div[data-testid="stRadio"] label {
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+/* ===== STUDYFLOW RESPONSIVE CHART FIX ===== */
+
+/* Let the main content use the available width */
+section[data-testid="stMain"] {
+    min-width: 0 !important;
+}
+
+section[data-testid="stMain"] > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+/* Prevent chart columns from forcing horizontal overflow */
+div[data-testid="stHorizontalBlock"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    gap: 1.25rem !important;
+}
+
+div[data-testid="column"] {
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* Keep Plotly charts within their columns */
+div[data-testid="stPlotlyChart"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+
+div[data-testid="stPlotlyChart"] iframe {
+    max-width: 100% !important;
+}
+
+/* Keep chart headings readable */
+div[data-testid="column"] h3,
+div[data-testid="column"] h4 {
+    overflow-wrap: anywhere;
+}
+
+/* Slightly reduce main content padding on smaller screens */
+@media (max-width: 1100px) {
+    section[data-testid="stMain"] > div {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -338,6 +732,24 @@ def insight_card(icon, title, text):
 
 def section(title):
     st.markdown(f'<div class="section-heading">{title}</div>', unsafe_allow_html=True)
+
+
+def apply_premium_chart_style(fig, height=280):
+    """Apply StudyFlow's dark dashboard style to Plotly figures."""
+    fig.update_layout(
+        template="plotly_dark",
+        height=height,
+        autosize=True,
+        margin=dict(l=8, r=8, t=18, b=8),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, sans-serif", color="#9aa8bc", size=11),
+        hoverlabel=dict(bgcolor="#151d2c", bordercolor="#374151", font_color="#f8fafc"),
+        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="rgba(148,163,184,.12)", tickfont=dict(color="#8795aa"))
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,.10)", zeroline=False, linecolor="rgba(148,163,184,.10)", tickfont=dict(color="#8795aa") )
+    return fig
 
 
 def safe_corr(value):
@@ -384,6 +796,9 @@ with st.sidebar:
             "📊 Analytics",
             "🎯 Focus & Distraction",
             "📈 Trends & Insights",
+            "🔥 Study Consistency",
+            "🎯 Weekly Goals",
+            "📄 Study Reports",
             "💡 Recommendations",
         ],
         label_visibility="collapsed",
@@ -410,7 +825,6 @@ if page == "➕ Add Study Session":
     left, right = st.columns([1.25, 1], gap="large")
 
     with left:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### 📝 Session details")
 
         date_value = st.date_input("Study Date", value=date.today())
@@ -452,10 +866,8 @@ if page == "➕ Add Study Session":
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with right:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### ⚙️ Performance details")
 
         break_duration = st.number_input(
@@ -473,7 +885,6 @@ if page == "➕ Add Study Session":
             "Test Score (%)", min_value=0.0, max_value=100.0, step=1.0, value=0.0
         )
 
-        st.markdown("</div>", unsafe_allow_html=True)
 
     st.write("")
 
@@ -586,8 +997,10 @@ elif page == "🏠 Overview":
         daily = daily_analysis(df)
         progress = progress_analysis(df)
 
+        current_hour = datetime.now().hour
+        greeting = "Good morning" if current_hour < 12 else "Good afternoon" if current_hour < 17 else "Good evening"
         header(
-            "Good Evening 👋",
+            f"{greeting} 👋",
             "Here's your current study performance at a glance.",
             "🏠",
         )
@@ -610,54 +1023,147 @@ elif page == "🏠 Overview":
         left, right = st.columns([1.65, 1], gap="large")
 
         with left:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**📈 Study Performance**")
             st.caption("Daily study hours")
             if not daily.empty:
-                chart = clean_chart_frame(
-                    daily.set_index("date"), ["study_hours"]
+                chart = daily.copy()
+                fig = px.area(
+                    chart, x="date", y="study_hours",
+                    labels={"date": "Study date", "study_hours": "Study hours"},
+                    markers=True,
                 )
-                st.line_chart(chart[["study_hours"]], height=280)
+                fig.update_traces(
+                    line=dict(color="#a78bfa", width=3),
+                    fillcolor="rgba(139,92,246,.13)",
+                    marker=dict(size=6, color="#c4b5fd", line=dict(width=1, color="#111827")),
+                    hovertemplate="%{x|%d %b %Y}<br><b>%{y:.2f} hours</b><extra></extra>",
+                )
+                fig.update_yaxes(rangemode="tozero")
+                st.plotly_chart(apply_premium_chart_style(fig, 280), width="stretch", config={"displayModeBar": False, "responsive": True})
             else:
                 st.info("Not enough daily data yet.")
-            st.markdown("</div>", unsafe_allow_html=True)
 
         with right:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**📚 Subject Performance**")
             st.caption("Average score by subject")
             if not subjects.empty:
-                chart = clean_chart_frame(
-                    subjects.set_index("subject"), ["average_score"]
+                chart = subjects.sort_values("average_score", ascending=True).copy()
+                chart["average_score"] = pd.to_numeric(
+                    chart["average_score"], errors="coerce"
                 )
-                st.bar_chart(chart[["average_score"]], height=280)
+                chart = chart.dropna(subset=["average_score"])
+
+                if not chart.empty:
+                    fig = px.bar(
+                        chart,
+                        x="average_score",
+                        y="subject",
+                        orientation="h",
+                        labels={
+                            "average_score": "Average score (%)",
+                            "subject": "",
+                        },
+                        text="average_score",
+                    )
+                    fig.update_traces(
+                        marker_color="#60a5fa",
+                        marker_line_width=0,
+                        texttemplate="%{x:.1f}%",
+                        textposition="outside",
+                        cliponaxis=False,
+                        textfont=dict(size=11, color="#e2e8f0"),
+                        hovertemplate=(
+                            "<b>%{y}</b><br>"
+                            "Average score: %{x:.1f}%<extra></extra>"
+                        ),
+                    )
+                    max_score = float(chart["average_score"].max())
+                    # Add enough space for score labels without squeezing the bars.
+                    fig.update_xaxes(
+                        range=[0, max(110, min(125, max_score + 15))],
+                        title_text="Average score (%)",
+                        automargin=True,
+                        showgrid=True,
+                        gridcolor="rgba(148,163,184,.10)",
+                    )
+                    fig.update_yaxes(
+                        title_text="",
+                        automargin=True,
+                        tickfont=dict(size=10),
+                    )
+                    fig.update_layout(
+                        height=max(280, min(360, 70 * len(chart) + 90)),
+                        margin=dict(l=12, r=52, t=16, b=48),
+                        bargap=0.32,
+                    )
+                    st.plotly_chart(
+                        apply_premium_chart_style(fig, max(280, min(360, 70 * len(chart) + 90))),
+                        width="stretch",
+                        config={"displayModeBar": False, "responsive": True},
+                    )
+                else:
+                    st.info("No valid subject scores available.")
             else:
                 st.info("No subject data.")
-            st.markdown("</div>", unsafe_allow_html=True)
 
         left, right = st.columns(2, gap="large")
 
         with left:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**🧠 Study Methods**")
             st.caption("Average score by study method")
             if not methods.empty:
-                chart = clean_chart_frame(
-                    methods.set_index("study_method"), ["average_score"]
+                chart = methods.sort_values("average_score", ascending=True).copy()
+                fig = px.bar(
+                    chart,
+                    x="average_score",
+                    y="study_method",
+                    orientation="h",
+                    labels={"study_method": "", "average_score": "Average score (%)"},
+                    text="average_score",
                 )
-                st.bar_chart(chart[["average_score"]], height=230)
-            st.markdown("</div>", unsafe_allow_html=True)
+                fig.update_traces(
+                    marker_color="#8b5cf6",
+                    marker_line_width=0,
+                    texttemplate="%{x:.1f}%",
+                    textposition="outside",
+                    cliponaxis=False,
+                    textfont=dict(size=10, color="#e2e8f0"),
+                    hovertemplate="<b>%{y}</b><br>Average score: %{x:.1f}%<extra></extra>",
+                )
+                max_score = float(chart["average_score"].max())
+                fig.update_xaxes(
+                    range=[0, max(110, min(125, max_score + 15))],
+                    title_text="Average score (%)",
+                    automargin=True,
+                )
+                fig.update_yaxes(title_text="", automargin=True, tickfont=dict(size=10))
+                chart_height = max(240, min(340, 45 * len(chart) + 90))
+                fig.update_layout(
+                    height=chart_height,
+                    margin=dict(l=8, r=45, t=12, b=45),
+                    bargap=0.3,
+                )
+                st.plotly_chart(
+                    apply_premium_chart_style(fig, chart_height),
+                    width="stretch",
+                    config={"displayModeBar": False, "responsive": True},
+                )
 
         with right:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**🕐 Best Study Time**")
             st.caption("Average score by time of day")
             if not times.empty:
-                chart = clean_chart_frame(
-                    times.set_index("time_period"), ["average_score"]
+                chart = times.copy()
+                fig = px.bar(
+                    chart, x="time_period", y="average_score",
+                    labels={"time_period": "Study period", "average_score": "Average score (%)"},
                 )
-                st.bar_chart(chart[["average_score"]], height=230)
-            st.markdown("</div>", unsafe_allow_html=True)
+                fig.update_traces(
+                    marker_color="#34d399", marker_line_width=0,
+                    hovertemplate="<b>%{x}</b><br>Average score: %{y:.1f}%<extra></extra>",
+                )
+                fig.update_yaxes(rangemode="tozero", range=[0, min(110, max(100, float(chart["average_score"].max()) * 1.12))])
+                st.plotly_chart(apply_premium_chart_style(fig, 230), width="stretch", config={"displayModeBar": False, "responsive": True})
 
         section("Quick Insights")
 
@@ -725,9 +1231,89 @@ elif page == "📊 Analytics":
     else:
         header(
             "Detailed Analytics",
-            "Explore the relationships between your study habits and performance.",
+            "Explore your study patterns with flexible filters and period comparisons.",
             "📊",
         )
+
+        # ----------------------------------------------------
+        # STAGE 3: ANALYTICS FILTERS
+        # ----------------------------------------------------
+        analytics_df = df.copy()
+        parsed_dates = pd.to_datetime(analytics_df["date"], errors="coerce")
+        valid_date_values = parsed_dates.dropna()
+
+        if valid_date_values.empty:
+            st.warning("Your study records do not contain valid dates, so date filtering is unavailable.")
+            st.stop()
+
+        min_date = valid_date_values.min().date()
+        max_date = valid_date_values.max().date()
+
+        st.markdown("### 🔎 Filter your analysis")
+        filter_col1, filter_col2, filter_col3 = st.columns([1.35, 1, 1])
+        with filter_col1:
+            selected_dates = st.date_input(
+                "Date range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                key="analytics_date_range",
+                help="Choose the period included in the analytics below.",
+            )
+        with filter_col2:
+            subject_options = sorted(
+                analytics_df["subject"].dropna().astype(str).unique().tolist()
+            )
+            selected_subjects = st.multiselect(
+                "Subjects",
+                options=subject_options,
+                default=subject_options,
+                key="analytics_subject_filter",
+                help="Select one or more subjects, or clear the selection to see none.",
+            )
+        with filter_col3:
+            if "study_method" in analytics_df.columns:
+                method_options = sorted(
+                    analytics_df["study_method"].dropna().astype(str).unique().tolist()
+                )
+            else:
+                method_options = []
+            selected_methods = st.multiselect(
+                "Study methods",
+                options=method_options,
+                default=method_options,
+                key="analytics_method_filter",
+                help="Filter analytics by the study methods you used.",
+            )
+
+        if isinstance(selected_dates, (tuple, list)) and len(selected_dates) == 2:
+            range_start, range_end = selected_dates
+        elif isinstance(selected_dates, (tuple, list)) and len(selected_dates) == 1:
+            range_start = range_end = selected_dates[0]
+        else:
+            range_start = range_end = selected_dates
+
+        analytics_df["_analytics_date"] = parsed_dates
+        filtered_mask = (
+            analytics_df["_analytics_date"].dt.date.ge(range_start)
+            & analytics_df["_analytics_date"].dt.date.le(range_end)
+            & analytics_df["subject"].astype(str).isin(selected_subjects)
+        )
+        if "study_method" in analytics_df.columns:
+            # Treat missing methods as a distinct value only when selected options include it;
+            # ordinary missing values are excluded by the method filter.
+            filtered_mask &= analytics_df["study_method"].astype(str).isin(selected_methods)
+
+        df = analytics_df.loc[filtered_mask].drop(columns=["_analytics_date"]).copy()
+
+        st.caption(
+            f"Showing {len(df)} of {len(analytics_df)} sessions · "
+            f"{range_start.strftime('%d %b %Y')} – {range_end.strftime('%d %b %Y')}"
+        )
+
+        if df.empty:
+            st.warning("No sessions match these filters. Expand the date range or select more subjects/methods.")
+            st.stop()
 
         metrics = calculate_metrics(df)
 
@@ -743,6 +1329,51 @@ elif page == "📊 Analytics":
         for col, (icon, value, label) in zip(cols, kpis):
             with col:
                 kpi_card(icon, value, label)
+
+        # Compare the selected period with the immediately preceding period of equal length.
+        with st.expander("📊 Compare with the previous period", expanded=False):
+            period_days = max(1, (range_end - range_start).days + 1)
+            previous_start = range_start - pd.Timedelta(days=period_days)
+            previous_end = range_start - pd.Timedelta(days=1)
+            all_dates = pd.to_datetime(analytics_df["date"], errors="coerce").dt.date
+            previous_mask = (
+                all_dates.ge(previous_start)
+                & all_dates.le(previous_end)
+                & analytics_df["subject"].astype(str).isin(selected_subjects)
+            )
+            if "study_method" in analytics_df.columns:
+                previous_mask &= analytics_df["study_method"].astype(str).isin(selected_methods)
+            previous_df = analytics_df.loc[previous_mask].drop(columns=["_analytics_date"], errors="ignore").copy()
+
+            if previous_df.empty:
+                st.info(
+                    f"No matching sessions were recorded in the previous period "
+                    f"({previous_start.strftime('%d %b')} – {previous_end.strftime('%d %b %Y')})."
+                )
+            else:
+                previous_metrics = calculate_metrics(previous_df)
+                compare_cols = st.columns(4)
+                comparisons = [
+                    ("Study hours", "total_study_hours", "h"),
+                    ("Sessions", "total_sessions", ""),
+                    ("Average score", "average_score", "%"),
+                    ("Average focus", "average_focus", "/5"),
+                ]
+                for col, (label, key, suffix) in zip(compare_cols, comparisons):
+                    current_value = float(metrics[key])
+                    previous_value = float(previous_metrics[key])
+                    delta = current_value - previous_value
+                    with col:
+                        st.metric(
+                            label,
+                            f"{current_value:.1f}{suffix}" if key != "total_sessions" else str(int(current_value)),
+                            delta=f"{delta:+.1f}{suffix}" if key != "total_sessions" else f"{int(delta):+d}",
+                        )
+                st.caption(
+                    f"Current: {range_start.strftime('%d %b')} – {range_end.strftime('%d %b %Y')} · "
+                    f"Previous: {previous_start.strftime('%d %b')} – {previous_end.strftime('%d %b %Y')}. "
+                    "Differences describe the recorded data; they do not establish cause and effect."
+                )
 
         st.write("")
 
@@ -766,6 +1397,8 @@ elif page == "📊 Analytics":
                     )[["average_score"]],
                     height=320,
                 )
+            else:
+                st.info("Not enough score data for subject analysis in this filtered period.")
 
         with tabs[1]:
             data = study_method_analysis(df)
@@ -782,6 +1415,8 @@ elif page == "📊 Analytics":
                     )[["average_score"]],
                     height=320,
                 )
+            else:
+                st.info("No study-method data is available for these filters.")
 
         with tabs[2]:
             data = time_of_day_analysis(df)
@@ -798,6 +1433,8 @@ elif page == "📊 Analytics":
                     )[["average_score"]],
                     height=320,
                 )
+            else:
+                st.info("Not enough data for time-of-day analysis in this filtered period.")
 
         with tabs[3]:
             data = duration_score_analysis(df)
@@ -810,6 +1447,8 @@ elif page == "📊 Analytics":
                 st.dataframe(data, width="stretch", hide_index=True)
                 chart = data.set_index("duration_group")[["average_score"]]
                 st.bar_chart(chart, height=320)
+            else:
+                st.info("Not enough duration and score data for this period.")
 
         with tabs[4]:
             data = focus_score_analysis(df)
@@ -824,6 +1463,8 @@ elif page == "📊 Analytics":
                     data.set_index("focus_rating")[["average_score"]],
                     height=320,
                 )
+            else:
+                st.info("Not enough focus and score data for this period.")
 
         with tabs[5]:
             data = distraction_score_analysis(df)
@@ -838,6 +1479,8 @@ elif page == "📊 Analytics":
                     data.set_index("distraction_group")[["average_score"]],
                     height=320,
                 )
+            else:
+                st.info("Not enough distraction and score data for this period.")
 
         with tabs[6]:
             progress = progress_analysis(df)
@@ -864,6 +1507,8 @@ elif page == "📊 Analytics":
                     daily.set_index("date")[["study_hours", "average_score"]],
                     height=330,
                 )
+            else:
+                st.info("Not enough daily data for a progress chart.")
 
 # ============================================================
 # FOCUS & DISTRACTION
@@ -904,7 +1549,6 @@ elif page == "🎯 Focus & Distraction":
         left, right = st.columns(2, gap="large")
 
         with left:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**🎯 Focus vs Test Score**")
             st.caption("Higher focus should ideally correspond to stronger results.")
             data = focus_score_analysis(df)
@@ -914,10 +1558,8 @@ elif page == "🎯 Focus & Distraction":
                     height=300,
                 )
                 st.caption(f"Correlation: {focus_corr:.3f}")
-            st.markdown("</div>", unsafe_allow_html=True)
 
         with right:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown("**📱 Distraction vs Test Score**")
             st.caption("See how interruptions relate to performance.")
             data = distraction_score_analysis(df)
@@ -927,7 +1569,6 @@ elif page == "🎯 Focus & Distraction":
                     height=300,
                 )
                 st.caption(f"Correlation: {distraction_corr:.3f}")
-            st.markdown("</div>", unsafe_allow_html=True)
 
         section("Actionable Insight")
 
@@ -1004,6 +1645,566 @@ elif page == "📈 Trends & Insights":
         """, unsafe_allow_html=True)
 
 # ============================================================
+# STUDY CONSISTENCY TRACKER
+# ============================================================
+
+elif page == "🔥 Study Consistency":
+    df = clean_data(load_data())
+    header(
+        "Study Consistency",
+        "Build a sustainable routine by tracking the days you study, not just the hours.",
+        "🔥",
+    )
+
+    if df.empty:
+        st.info("Add study sessions to start building your consistency calendar.")
+    else:
+        tracker = df.copy()
+        tracker["study_day"] = pd.to_datetime(tracker["date"], errors="coerce").dt.normalize()
+        tracker["study_duration"] = pd.to_numeric(tracker["study_duration"], errors="coerce").fillna(0)
+        tracker = tracker.dropna(subset=["study_day"])
+        tracker = tracker[tracker["study_duration"] > 0]
+
+        if tracker.empty:
+            st.info("No valid study days were found yet. Add a session with a duration greater than zero.")
+        else:
+            daily = tracker.groupby("study_day", as_index=False).agg(
+                study_hours=("study_duration", "sum"),
+                sessions=("study_duration", "size"),
+            )
+            active_dates = set(daily["study_day"].dt.date.tolist())
+            today = pd.Timestamp(date.today()).normalize()
+            today_date = today.date()
+            week_start = today - pd.Timedelta(days=today.weekday())
+            week_dates = [week_start + pd.Timedelta(days=i) for i in range(7)]
+            this_week = daily[(daily["study_day"] >= week_start) & (daily["study_day"] <= today)]
+            active_days_this_week = int(this_week["study_day"].dt.date.nunique())
+            hours_this_week = float(this_week["study_hours"].sum())
+
+            sorted_dates = sorted(active_dates)
+            longest_streak = 0
+            running_streak = 0
+            previous = None
+            for day in sorted_dates:
+                if previous is not None and (day - previous).days == 1:
+                    running_streak += 1
+                else:
+                    running_streak = 1
+                longest_streak = max(longest_streak, running_streak)
+                previous = day
+
+            if today_date in active_dates:
+                streak_anchor = today_date
+            elif (today - pd.Timedelta(days=1)).date() in active_dates:
+                streak_anchor = (today - pd.Timedelta(days=1)).date()
+            else:
+                streak_anchor = None
+
+            current_streak = 0
+            if streak_anchor is not None:
+                cursor = streak_anchor
+                while cursor in active_dates:
+                    current_streak += 1
+                    cursor = cursor - pd.Timedelta(days=1)
+                    cursor = cursor.date() if isinstance(cursor, pd.Timestamp) else cursor
+
+            best_day = daily.loc[daily["study_hours"].idxmax()]
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                kpi_card("🔥", f"{current_streak} day{'s' if current_streak != 1 else ''}", "Current streak")
+            with m2:
+                kpi_card("🏆", f"{longest_streak} day{'s' if longest_streak != 1 else ''}", "Longest streak")
+            with m3:
+                kpi_card("📅", f"{active_days_this_week}/7", "Active days this week")
+            with m4:
+                kpi_card("⏱️", f"{hours_this_week:.1f} h", "Study hours this week")
+
+            section("This Week")
+            week_labels = [d.strftime("%a") for d in week_dates]
+            week_status = ["Studied" if d.date() in active_dates else "No session" for d in week_dates]
+            week_frame = pd.DataFrame({
+                "Day": week_labels,
+                "Date": [d.strftime("%d %b") for d in week_dates],
+                "Status": week_status,
+            })
+            cols = st.columns(7)
+            for i, col in enumerate(cols):
+                studied = week_status[i] == "Studied"
+                with col:
+                    st.markdown(f"""
+                    <div class="card" style="padding:12px 6px;text-align:center;min-height:92px;">
+                        <div style="color:#8996aa;font-size:11px;">{week_labels[i]}</div>
+                        <div style="font-size:20px;margin:7px 0;">{'✅' if studied else '○'}</div>
+                        <div style="color:{'#a78bfa' if studied else '#64748b'};font-size:10px;">{week_dates[i].strftime('%d %b')}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            section("Your Last 12 Weeks")
+            calendar_end = today
+            calendar_start = today - pd.Timedelta(days=83)
+            calendar_days = pd.DataFrame({"study_day": pd.date_range(calendar_start, calendar_end, freq="D")})
+            calendar_daily = calendar_days.merge(daily, on="study_day", how="left")
+            calendar_daily["study_hours"] = calendar_daily["study_hours"].fillna(0)
+            calendar_daily["sessions"] = calendar_daily["sessions"].fillna(0).astype(int)
+            calendar_daily["week_start"] = calendar_daily["study_day"] - pd.to_timedelta(calendar_daily["study_day"].dt.weekday, unit="D")
+            calendar_daily["week_label"] = calendar_daily["week_start"].dt.strftime("%d %b")
+            calendar_daily["weekday"] = calendar_daily["study_day"].dt.day_name().str[:3]
+            fig = px.scatter(
+                calendar_daily,
+                x="week_start",
+                y="weekday",
+                color="study_hours",
+                size=calendar_daily["study_hours"].clip(lower=0.25),
+                hover_name=calendar_daily["study_day"].dt.strftime("%A, %d %B %Y"),
+                hover_data={"study_hours": ":.2f", "sessions": True, "week_start": False, "weekday": False},
+                color_continuous_scale=["#202938", "#5b46a8", "#a78bfa"],
+                labels={"week_start": "Week starting", "weekday": "Day", "study_hours": "Study hours"},
+            )
+            fig.update_traces(marker=dict(line=dict(width=0)))
+            fig.update_layout(
+                height=300,
+                margin=dict(l=12, r=12, t=12, b=42),
+                coloraxis_colorbar=dict(title="Hours", thickness=10, len=0.7),
+            )
+            fig.update_yaxes(categoryorder="array", categoryarray=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], title_text="")
+            fig.update_xaxes(title_text="Week", tickformat="%d %b", dtick="M1")
+            st.plotly_chart(apply_premium_chart_style(fig, 300), width="stretch", config={"displayModeBar": False, "responsive": True})
+
+            section("Consistency Highlights")
+            h1, h2 = st.columns(2, gap="large")
+            with h1:
+                st.markdown(f"""
+                <div class="card">
+                    <div class="card-title">🌟 Strongest study day</div>
+                    <div style="font-size:24px;font-weight:800;color:#f8fafc;margin-top:10px;">{pd.Timestamp(best_day['study_day']).strftime('%d %b %Y')}</div>
+                    <div class="card-muted">{float(best_day['study_hours']):.1f} study hours across {int(best_day['sessions'])} session(s).</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with h2:
+                consistency_rate = (len(active_dates) / max(1, (today_date - min(active_dates)).days + 1)) * 100
+                st.markdown(f"""
+                <div class="card">
+                    <div class="card-title">📈 Study-day consistency</div>
+                    <div style="font-size:24px;font-weight:800;color:#f8fafc;margin-top:10px;">{consistency_rate:.1f}%</div>
+                    <div class="card-muted">Percentage of days with a recorded study session since your first recorded study day.</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+# ============================================================
+# WEEKLY STUDY GOALS
+# ============================================================
+
+elif page == "🎯 Weekly Goals":
+    header(
+        "Weekly Study Goals",
+        "Set realistic targets, track your progress, and build a consistent study routine.",
+        "🎯",
+    )
+
+    today = pd.Timestamp(date.today()).normalize()
+    week_start = today - pd.Timedelta(days=today.weekday())
+    week_end = week_start + pd.Timedelta(days=6)
+    week_start_text = week_start.strftime("%Y-%m-%d")
+
+    st.markdown(
+        f"**Current week:** {week_start.strftime('%d %b %Y')} – {week_end.strftime('%d %b %Y')}"
+    )
+    st.caption("Goals are saved in your local SQLite database and are kept separately from study-session records.")
+
+    goals = get_weekly_goals(week_start_text)
+    overall_goal = next((g["goal_hours"] for g in goals if g["subject"] == "__OVERALL__"), 10.0)
+    subject_goals = {g["subject"]: g["goal_hours"] for g in goals if g["subject"] != "__OVERALL__"}
+
+    st.markdown("### ⚙️ Set your weekly targets")
+    with st.form("weekly_goal_form"):
+        overall_target = st.number_input(
+            "Overall weekly study goal (hours)",
+            min_value=0.5,
+            max_value=168.0,
+            value=float(overall_goal),
+            step=0.5,
+            help="Total study hours you want to complete from Monday through Sunday.",
+        )
+
+        source_df = clean_data(load_data())
+        available_subjects = []
+        if not source_df.empty and "subject" in source_df.columns:
+            available_subjects = sorted(
+                str(s).strip() for s in source_df["subject"].dropna().unique() if str(s).strip()
+            )
+        goal_subject_options = sorted(set(available_subjects) | set(subject_goals.keys()))
+        goal_subject_options = [s for s in goal_subject_options if s != "__OVERALL__"]
+
+        if goal_subject_options:
+            goal_subject = st.selectbox("Subject for an optional subject-specific goal", goal_subject_options)
+            current_subject_target = float(subject_goals.get(goal_subject, 2.0))
+            subject_target = st.number_input(
+                f"Weekly goal for {goal_subject} (hours)",
+                min_value=0.0,
+                max_value=168.0,
+                value=min(current_subject_target, 168.0),
+                step=0.5,
+                help="Set to 0 if you do not want a target for this subject.",
+            )
+        else:
+            goal_subject = None
+            subject_target = 0.0
+            st.info("Add a study session first to create subject-specific goals. You can still set your overall weekly goal.")
+
+        save_goals = st.form_submit_button("💾 Save weekly goals", type="primary", width="stretch")
+
+    if save_goals:
+        save_weekly_goal(week_start_text, "__OVERALL__", float(overall_target))
+        if goal_subject:
+            if subject_target > 0:
+                save_weekly_goal(week_start_text, goal_subject, float(subject_target))
+            else:
+                delete_weekly_goal(week_start_text, goal_subject)
+        st.success("Your weekly goals have been saved.")
+        st.rerun()
+
+    df = clean_data(load_data())
+    if df.empty:
+        st.info("Your goals are ready. Add study sessions during this week to see your progress here.")
+    else:
+        goal_df = df.copy()
+        goal_df["date"] = pd.to_datetime(goal_df["date"], errors="coerce")
+        goal_df["study_duration"] = pd.to_numeric(goal_df["study_duration"], errors="coerce").fillna(0)
+        goal_df = goal_df.dropna(subset=["date"])
+        goal_df = goal_df[
+            (goal_df["date"].dt.date >= week_start.date()) &
+            (goal_df["date"].dt.date <= today.date())
+        ]
+
+        hours_done = float(goal_df["study_duration"].sum()) if not goal_df.empty else 0.0
+        overall_goal = float(overall_goal)
+        overall_progress = min(hours_done / overall_goal, 1.0) if overall_goal > 0 else 0.0
+        remaining = max(overall_goal - hours_done, 0.0)
+
+        st.markdown("### 📊 Your progress this week")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Hours studied", f"{hours_done:.1f} h")
+        m2.metric("Weekly target", f"{overall_goal:.1f} h")
+        m3.metric("Hours remaining", f"{remaining:.1f} h", delta=f"{overall_progress * 100:.0f}% complete")
+        st.progress(overall_progress, text=f"Overall goal: {overall_progress * 100:.0f}% completed")
+
+        if overall_goal > 0 and hours_done >= overall_goal:
+            st.success("🎉 Weekly study goal completed! Great work — keep the routine sustainable.")
+        elif remaining > 0:
+            days_left_including_today = max((week_end.date() - today.date()).days + 1, 1)
+            daily_needed = remaining / days_left_including_today
+            st.info(f"You need about **{daily_needed:.1f} study hours per day** for the rest of this week to reach your target.")
+
+        if subject_goals:
+            st.markdown("### 📚 Subject goal progress")
+            subject_rows = []
+            for subject_name, target_hours in sorted(subject_goals.items()):
+                subject_sessions = goal_df[goal_df["subject"].astype(str).str.strip() == subject_name]
+                studied = float(subject_sessions["study_duration"].sum()) if not subject_sessions.empty else 0.0
+                percent = min(studied / target_hours, 1.0) * 100 if target_hours > 0 else 0.0
+                subject_rows.append({
+                    "Subject": subject_name,
+                    "Hours studied": round(studied, 2),
+                    "Weekly target (hours)": round(float(target_hours), 2),
+                    "Progress (%)": round(percent, 1),
+                    "Status": "Completed 🎉" if target_hours > 0 and studied >= target_hours else "In progress",
+                })
+                st.markdown(f"**{subject_name}** — {studied:.1f} / {float(target_hours):.1f} hours")
+                st.progress(percent / 100, text=f"{percent:.0f}% completed")
+            if subject_rows:
+                st.dataframe(pd.DataFrame(subject_rows), width="stretch", hide_index=True)
+
+        st.markdown("### 🗓️ Daily study hours")
+        week_days = pd.DataFrame({"date": pd.date_range(week_start, today, freq="D")})
+        if not goal_df.empty:
+            daily_hours = goal_df.groupby(goal_df["date"].dt.normalize())["study_duration"].sum().reset_index()
+            daily_hours.columns = ["date", "study_duration"]
+            week_days = week_days.merge(daily_hours, on="date", how="left")
+        else:
+            week_days["study_duration"] = 0.0
+        week_days["study_duration"] = week_days["study_duration"].fillna(0.0)
+        week_days["day"] = week_days["date"].dt.strftime("%a, %d %b")
+        fig = px.bar(
+            week_days,
+            x="day",
+            y="study_duration",
+            labels={"day": "Day", "study_duration": "Study hours"},
+            text="study_duration",
+        )
+        fig.update_traces(marker_color="#8b5cf6", texttemplate="%{text:.1f}h", textposition="outside")
+        fig.update_yaxes(rangemode="tozero", title_text="Study hours")
+        st.plotly_chart(apply_premium_chart_style(fig, 280), width="stretch", config={"displayModeBar": False, "responsive": True})
+
+        st.caption("Progress is calculated from sessions dated Monday through today. Future days in the week are not counted yet.")
+
+
+# ============================================================
+# STUDY REPORTS
+# ============================================================
+
+elif page == "📄 Study Reports":
+    header(
+        "Exportable Study Reports",
+        "Filter your study history and download a CSV or a printable PDF report.",
+        "📄",
+    )
+
+    raw_sessions = get_all_sessions()
+    report_columns = [
+        "ID", "Date", "Subject", "Start Time", "End Time",
+        "Study Hours", "Break Minutes", "Distraction Minutes",
+        "Study Method", "Focus Rating", "Test Score (%)",
+    ]
+
+    if not raw_sessions:
+        st.info("There are no study sessions to export yet. Add a study session first.")
+    else:
+        all_sessions_df = pd.DataFrame(raw_sessions, columns=report_columns)
+        all_sessions_df["Date"] = pd.to_datetime(
+            all_sessions_df["Date"], errors="coerce"
+        ).dt.date
+        for numeric_col in [
+            "Study Hours", "Break Minutes", "Distraction Minutes",
+            "Focus Rating", "Test Score (%)",
+        ]:
+            all_sessions_df[numeric_col] = pd.to_numeric(
+                all_sessions_df[numeric_col], errors="coerce"
+            )
+
+        valid_dates = all_sessions_df["Date"].dropna()
+        if valid_dates.empty:
+            st.warning("The saved session dates could not be read. Check the date format in your database.")
+        else:
+            min_date = min(valid_dates)
+            max_date = max(valid_dates)
+            st.markdown("### Choose report filters")
+            date_col, subject_col = st.columns([1.2, 1], gap="large")
+            with date_col:
+                selected_dates = st.date_input(
+                    "Report date range",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    help="Choose the first and last date to include in the report.",
+                )
+            with subject_col:
+                subject_options = sorted(
+                    all_sessions_df["Subject"].dropna().astype(str).unique().tolist()
+                )
+                selected_subjects = st.multiselect(
+                    "Subjects",
+                    options=subject_options,
+                    default=subject_options,
+                    help="Leave all subjects selected to export your full study history.",
+                )
+
+            if isinstance(selected_dates, (tuple, list)) and len(selected_dates) == 2:
+                start_date, end_date = selected_dates
+            elif isinstance(selected_dates, date):
+                start_date = end_date = selected_dates
+            else:
+                start_date, end_date = min_date, max_date
+
+            if start_date > end_date:
+                st.error("The start date must be on or before the end date.")
+                report_df = all_sessions_df.iloc[0:0].copy()
+            else:
+                report_df = all_sessions_df[
+                    all_sessions_df["Date"].between(start_date, end_date, inclusive="both")
+                ].copy()
+                if selected_subjects:
+                    report_df = report_df[report_df["Subject"].astype(str).isin(selected_subjects)]
+                else:
+                    report_df = report_df.iloc[0:0]
+
+            total_hours = float(report_df["Study Hours"].fillna(0).sum()) if not report_df.empty else 0.0
+            session_count = int(len(report_df))
+            average_score = report_df["Test Score (%)"].dropna().mean() if not report_df.empty else float("nan")
+            average_focus = report_df["Focus Rating"].dropna().mean() if not report_df.empty else float("nan")
+
+            metric_cols = st.columns(4)
+            metric_values = [
+                ("Sessions", f"{session_count}"),
+                ("Study hours", f"{total_hours:.1f} h"),
+                ("Average score", f"{average_score:.1f}%" if pd.notna(average_score) else "—"),
+                ("Average focus", f"{average_focus:.1f}/5" if pd.notna(average_focus) else "—"),
+            ]
+            for metric_col, (label, value) in zip(metric_cols, metric_values):
+                with metric_col:
+                    st.metric(label, value)
+
+            st.markdown("### Report preview")
+            if report_df.empty:
+                st.info("No sessions match these filters. Change the date range or select one or more subjects.")
+            else:
+                subject_summary = (
+                    report_df.groupby("Subject", dropna=False)
+                    .agg(
+                        Sessions=("ID", "count"),
+                        Study_Hours=("Study Hours", "sum"),
+                        Average_Score=("Test Score (%)", "mean"),
+                        Average_Focus=("Focus Rating", "mean"),
+                    )
+                    .reset_index()
+                )
+                subject_summary["Study_Hours"] = subject_summary["Study_Hours"].round(2)
+                subject_summary["Average_Score"] = subject_summary["Average_Score"].round(1)
+                subject_summary["Average_Focus"] = subject_summary["Average_Focus"].round(1)
+                st.dataframe(
+                    report_df.drop(columns=["ID"]).sort_values(["Date", "Subject"], ascending=[False, True]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.markdown("#### Summary by subject")
+                display_summary = subject_summary.rename(columns={
+                    "Study_Hours": "Study Hours",
+                    "Average_Score": "Average Score (%)",
+                    "Average_Focus": "Average Focus",
+                })
+                st.dataframe(display_summary, use_container_width=True, hide_index=True)
+
+                csv_buffer = io.StringIO()
+                csv_export = report_df.copy()
+                csv_export["Date"] = csv_export["Date"].astype(str)
+                csv_export.to_csv(csv_buffer, index=False)
+
+                export_col1, export_col2 = st.columns(2, gap="medium")
+                with export_col1:
+                    st.download_button(
+                        "⬇️ Download CSV report",
+                        data="\ufeff" + csv_buffer.getvalue(),
+                        file_name=f"studyflow_report_{start_date}_{end_date}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+
+                with export_col2:
+                    if st.button("🧾 Prepare PDF report", use_container_width=True):
+                        st.session_state["studyflow_pdf_report_requested"] = True
+
+                if st.session_state.get("studyflow_pdf_report_requested", False):
+                    try:
+                        from reportlab.lib import colors
+                        from reportlab.lib.enums import TA_CENTER
+                        from reportlab.lib.pagesizes import A4, landscape
+                        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                        from reportlab.lib.units import mm
+                        from reportlab.platypus import (
+                            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+                            PageBreak, KeepTogether,
+                        )
+
+                        pdf_buffer = io.BytesIO()
+                        document = SimpleDocTemplate(
+                            pdf_buffer,
+                            pagesize=landscape(A4),
+                            rightMargin=14 * mm,
+                            leftMargin=14 * mm,
+                            topMargin=13 * mm,
+                            bottomMargin=13 * mm,
+                            title="StudyFlow Study Report",
+                            author="StudyFlow",
+                        )
+                        styles = getSampleStyleSheet()
+                        styles.add(ParagraphStyle(
+                            name="StudyFlowTitle", parent=styles["Title"],
+                            alignment=TA_CENTER, textColor=colors.HexColor("#5B21B6"),
+                            fontSize=20, leading=24, spaceAfter=5,
+                        ))
+                        styles.add(ParagraphStyle(
+                            name="StudyFlowSub", parent=styles["Normal"],
+                            alignment=TA_CENTER, textColor=colors.HexColor("#475569"),
+                            fontSize=9, leading=12, spaceAfter=12,
+                        ))
+                        story = [
+                            Paragraph("StudyFlow — Study Report", styles["StudyFlowTitle"]),
+                            Paragraph(
+                                f"Period: {start_date.strftime('%d %b %Y')} – {end_date.strftime('%d %b %Y')} | "
+                                f"Generated: {datetime.now().strftime('%d %b %Y, %I:%M %p')}",
+                                styles["StudyFlowSub"],
+                            ),
+                        ]
+                        summary_data = [
+                            ["Sessions", "Total study hours", "Average score", "Average focus"],
+                            [str(session_count), f"{total_hours:.1f} h",
+                             f"{average_score:.1f}%" if pd.notna(average_score) else "Not recorded",
+                             f"{average_focus:.1f}/5" if pd.notna(average_focus) else "Not recorded"],
+                        ]
+                        summary_table = Table(summary_data, colWidths=[55 * mm] * 4)
+                        summary_table.setStyle(TableStyle([
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDE9FE")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#4C1D95")),
+                            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 9),
+                            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                            ("TOPPADDING", (0, 0), (-1, -1), 8),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                        ]))
+                        story.extend([summary_table, Spacer(1, 8 * mm), Paragraph("Subject Summary", styles["Heading2"])])
+
+                        subject_pdf_data = [["Subject", "Sessions", "Study hours", "Avg. score", "Avg. focus"]]
+                        for _, row in subject_summary.iterrows():
+                            subject_pdf_data.append([
+                                str(row["Subject"]), str(int(row["Sessions"])),
+                                f"{float(row['Study_Hours'] or 0):.2f}",
+                                f"{float(row['Average_Score']):.1f}%" if pd.notna(row["Average_Score"]) else "—",
+                                f"{float(row['Average_Focus']):.1f}/5" if pd.notna(row["Average_Focus"]) else "—",
+                            ])
+                        subject_table = Table(subject_pdf_data, repeatRows=1, colWidths=[70 * mm, 30 * mm, 35 * mm, 35 * mm, 35 * mm])
+                        subject_table.setStyle(TableStyle([
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 8),
+                            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
+                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+                            ("TOPPADDING", (0, 0), (-1, -1), 5),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                        ]))
+                        story.extend([subject_table, Spacer(1, 8 * mm), Paragraph("Session Details", styles["Heading2"])])
+
+                        detail_columns = ["Date", "Subject", "Start Time", "End Time", "Study Hours", "Break Minutes", "Distraction Minutes", "Study Method", "Focus Rating", "Test Score (%)"]
+                        detail_data = [["Date", "Subject", "Start", "End", "Hours", "Break min", "Distr. min", "Method", "Focus", "Score %"]]
+                        for _, row in report_df.sort_values(["Date", "Subject"]).iterrows():
+                            detail_data.append([
+                                str(row["Date"]), str(row["Subject"]), str(row["Start Time"]), str(row["End Time"]),
+                                f"{float(row['Study Hours'] or 0):.2f}",
+                                f"{float(row['Break Minutes'] or 0):.0f}",
+                                f"{float(row['Distraction Minutes'] or 0):.0f}",
+                                str(row["Study Method"] or "—"),
+                                str(int(row["Focus Rating"])) if pd.notna(row["Focus Rating"]) else "—",
+                                f"{float(row['Test Score (%)']):.1f}" if pd.notna(row["Test Score (%)"]) else "—",
+                            ])
+                        detail_table = Table(detail_data, repeatRows=1, colWidths=[24*mm, 31*mm, 18*mm, 18*mm, 18*mm, 19*mm, 20*mm, 30*mm, 15*mm, 18*mm])
+                        detail_table.setStyle(TableStyle([
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 7),
+                            ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                            ("TOPPADDING", (0, 0), (-1, -1), 4),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ]))
+                        story.append(detail_table)
+                        document.build(story)
+                        st.download_button(
+                            "⬇️ Download PDF report",
+                            data=pdf_buffer.getvalue(),
+                            file_name=f"studyflow_report_{start_date}_{end_date}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="studyflow_pdf_download",
+                        )
+                    except ImportError:
+                        st.error("PDF export needs ReportLab. Install it in your project environment with: python -m pip install reportlab")
+                    except Exception as exc:
+                        st.error(f"Could not create the PDF report: {exc}")
+
+
+# ============================================================
 # RECOMMENDATIONS
 # ============================================================
 
@@ -1028,9 +2229,65 @@ elif page == "💡 Recommendations":
         subjects = subject_analysis(df)
         methods = study_method_analysis(df)
         times = time_of_day_analysis(df)
+        daily = daily_analysis(df)
+
+        # ── Compute streak for the recommendations engine ─────────────────
+        _today = pd.Timestamp(date.today()).normalize()
+        _tracker = df.copy()
+        _tracker["study_day"] = pd.to_datetime(
+            _tracker["date"], errors="coerce"
+        ).dt.normalize()
+        _tracker["study_duration"] = pd.to_numeric(
+            _tracker["study_duration"], errors="coerce"
+        ).fillna(0)
+        _tracker = _tracker.dropna(subset=["study_day"])
+        _tracker = _tracker[_tracker["study_duration"] > 0]
+
+        _streak_days = 0
+        if not _tracker.empty:
+            _active_dates = set(
+                _tracker.groupby("study_day").first().reset_index()["study_day"]
+                .dt.date.tolist()
+            )
+            _anchor = (
+                _today.date()
+                if _today.date() in _active_dates
+                else (_today - pd.Timedelta(days=1)).date()
+                if (_today - pd.Timedelta(days=1)).date() in _active_dates
+                else None
+            )
+            if _anchor is not None:
+                _cursor = _anchor
+                while _cursor in _active_dates:
+                    _streak_days += 1
+                    _cursor = (
+                        pd.Timestamp(_cursor) - pd.Timedelta(days=1)
+                    ).date()
+
+        # ── Weekly goal context ───────────────────────────────────────────
+        _week_start = _today - pd.Timedelta(days=_today.weekday())
+        _goals = get_weekly_goals(_week_start.strftime("%Y-%m-%d"))
+        _overall_goal = next(
+            (g["goal_hours"] for g in _goals if g["subject"] == "__OVERALL__"),
+            0.0,
+        )
+        _week_df = df.copy()
+        _week_df["date"] = pd.to_datetime(_week_df["date"], errors="coerce")
+        _week_df = _week_df[
+            _week_df["date"].dt.date >= _week_start.date()
+        ]
+        _hours_this_week = float(
+            pd.to_numeric(_week_df["study_duration"], errors="coerce")
+            .fillna(0)
+            .sum()
+        )
 
         recommendations = generate_recommendations(
-            df, metrics, subjects, methods, times
+            df, metrics, subjects, methods, times,
+            daily_data=daily,
+            streak_days=_streak_days,
+            weekly_goal_hours=float(_overall_goal),
+            weekly_studied_hours=_hours_this_week,
         )
 
         for index, recommendation in enumerate(recommendations, start=1):
@@ -1050,6 +2307,7 @@ elif page == "💡 Recommendations":
             "💡 These recommendations are based on your recorded study behavior "
             "and will become more useful as you add more sessions."
         )
+
 
 # ============================================================
 # FOOTER

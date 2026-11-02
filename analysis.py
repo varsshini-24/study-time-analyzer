@@ -1,8 +1,10 @@
 import pandas as pd
 import sqlite3
+import os
 import numpy as np
 
-DATABASE_PATH = "data/study.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_PATH = os.path.join(BASE_DIR, "data", "study.db")
 
 
 def load_data():
@@ -42,9 +44,10 @@ def clean_data(df):
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["start_time"] = df["start_time"].astype(str)
 
+    # Only drop rows that are missing truly required fields.
+    # focus_rating and test_score are optional; calculations below handle NaN.
     df = df.dropna(
-        subset=["date", "subject", "study_duration",
-                "focus_rating", "test_score"]
+        subset=["date", "subject", "study_duration"]
     )
 
     df["distraction_time"] = df["distraction_time"].fillna(0)
@@ -332,58 +335,305 @@ def progress_analysis(df):
     }
 
 
-def generate_recommendations(df, metrics, subject_data, method_data, time_data):
+
+# ── Minimum thresholds for "best X" claims ────────────────────────────────
+_MIN_SESSIONS_FOR_BEST_CLAIM = 3   # must have ≥ this many sessions per bucket
+
+
+def generate_recommendations(
+    df,
+    metrics,
+    subject_data,
+    method_data,
+    time_data,
+    *,
+    daily_data=None,
+    streak_days: int = 0,
+    weekly_goal_hours: float = 0.0,
+    weekly_studied_hours: float = 0.0,
+):
+    """
+    Return a list of personalised recommendation strings derived entirely
+    from the user's own recorded data.
+
+    Parameters
+    ----------
+    df : DataFrame        – cleaned session data
+    metrics : dict        – from calculate_metrics()
+    subject_data : DataFrame – from subject_analysis()
+    method_data  : DataFrame – from study_method_analysis()
+    time_data    : DataFrame – from time_of_day_analysis()
+    daily_data   : DataFrame | None – from daily_analysis(); used for
+                   streak/consistency insights (optional, backward-compat)
+    streak_days  : int    – current consecutive-day streak (optional)
+    weekly_goal_hours   : float – user's overall weekly study goal
+    weekly_studied_hours : float – hours studied so far this week
+    """
     recommendations = []
-
+    total_sessions = metrics["total_sessions"]
     focus = metrics["average_focus"]
-    distraction = metrics["total_distraction"] / max(metrics["total_sessions"], 1)
     score = metrics["average_score"]
+    distraction_per_session = (
+        metrics["total_distraction"] / max(total_sessions, 1)
+    )
 
-    if focus < 3:
-        recommendations.append("🎯 Focus is low. Use shorter distraction-free study blocks.")
-    elif focus < 4:
-        recommendations.append("🎯 Focus is moderate. Try reducing interruptions and using focused study blocks.")
-    else:
-        recommendations.append("🎯 Strong focus level. Keep protecting your distraction-free study time.")
-
-    if distraction > 15:
-        recommendations.append("📱 Distraction is high. Put your phone away or use app/site blockers during study.")
-    elif distraction > 8:
-        recommendations.append("📱 Distraction is moderate. Reducing interruptions can improve effectiveness.")
-    else:
-        recommendations.append("📱 Distraction is well controlled. Keep your current habits.")
-
-    if not method_data.empty:
-        best = find_best_method(method_data)
+    # ── 1. DATA VOLUME CHECK ─────────────────────────────────────────────────
+    # Surface a gentle nudge when there is very little data overall,
+    # but still generate whatever partial insights we can.
+    if total_sessions < 3:
         recommendations.append(
-            f"📚 Your strongest method is {best['study_method']} "
-            f"with an average score of {best['average_score']:.1f}%."
+            "📊 You have fewer than 3 study sessions recorded. "
+            "Add more sessions to unlock richer, personalised insights — "
+            "most recommendations need at least 3 sessions to be meaningful."
         )
 
-    if not time_data.empty:
-        best_time = find_best_time(time_data)
+    # ── 2. FOCUS RATING ──────────────────────────────────────────────────────
+    if pd.isna(focus):
         recommendations.append(
-            f"🕐 Your best-performing period is {best_time['time_period']} "
-            f"with an average score of {best_time['average_score']:.1f}%."
+            "🎯 No focus ratings recorded yet. "
+            "Rate your concentration after each session (1–5) so StudyFlow "
+            "can identify patterns in your study quality."
         )
-
-    if not subject_data.empty:
-        weakest = subject_data.sort_values("average_score").iloc[0]
-        strongest = subject_data.sort_values("average_score", ascending=False).iloc[0]
-        if weakest["subject"] != strongest["subject"]:
+    else:
+        rated_sessions = int(df["focus_rating"].notna().sum())
+        if focus < 3:
             recommendations.append(
-                f"📖 Give extra revision time to {weakest['subject']} "
-                f"(average score {weakest['average_score']:.1f}%)."
+                f"🎯 Your average focus is {focus:.1f}/5 across "
+                f"{rated_sessions} rated session(s). "
+                "Try shorter, distraction-free blocks (25–45 min) with "
+                "scheduled breaks to strengthen your concentration."
+            )
+        elif focus < 4:
+            recommendations.append(
+                f"🎯 Your average focus is {focus:.1f}/5 across "
+                f"{rated_sessions} rated session(s). "
+                "Moderate focus — experiment with removing nearby distractions "
+                "before each session to push this above 4."
+            )
+        else:
+            recommendations.append(
+                f"🎯 Strong focus: {focus:.1f}/5 average across "
+                f"{rated_sessions} rated session(s). "
+                "Keep protecting your distraction-free study time."
             )
 
-    if score >= 85:
-        recommendations.append("📈 Overall performance is strong. Focus on consistency to maintain it.")
-    elif score >= 75:
-        recommendations.append("📈 Performance is good. Improving focus and reducing distraction should help.")
+    # ── 3. DISTRACTION TIME ──────────────────────────────────────────────────
+    # Use associative language only — not causal.
+    if distraction_per_session > 15:
+        recommendations.append(
+            f"📱 Average distraction is {distraction_per_session:.0f} min/session — "
+            "higher than the recommended target. "
+            "Sessions with lower distraction tend to coincide with better results. "
+            "Try silencing notifications or using a site-blocker while studying."
+        )
+    elif distraction_per_session > 8:
+        recommendations.append(
+            f"📱 Average distraction is {distraction_per_session:.0f} min/session — "
+            "moderate. Reducing interruptions further may help your study quality."
+        )
     else:
-        recommendations.append("📈 Test performance needs improvement. Prioritize practice and revision.")
+        recommendations.append(
+            f"📱 Distraction is well controlled "
+            f"({distraction_per_session:.0f} min/session on average). "
+            "Keep your current habits."
+        )
+
+    # ── 4. STUDY METHOD ──────────────────────────────────────────────────────
+    # Only declare a "best method" when it has ≥ _MIN_SESSIONS_FOR_BEST_CLAIM
+    # sessions AND those sessions include at least one recorded test score.
+    if method_data.empty:
+        recommendations.append(
+            "📚 No study method data yet. "
+            "Recording the method you use each session will let StudyFlow "
+            "identify which approach works best for you."
+        )
+    else:
+        qualified = method_data[
+            (method_data["sessions"] >= _MIN_SESSIONS_FOR_BEST_CLAIM)
+            & method_data["average_score"].notna()
+        ]
+        if qualified.empty:
+            # Report how many sessions each method currently has
+            below = method_data[method_data["sessions"] < _MIN_SESSIONS_FOR_BEST_CLAIM]
+            if not below.empty:
+                needed = _MIN_SESSIONS_FOR_BEST_CLAIM - int(below["sessions"].max())
+                recommendations.append(
+                    f"📚 Not enough data to identify your best study method yet "
+                    f"(need {_MIN_SESSIONS_FOR_BEST_CLAIM} sessions per method with a recorded score). "
+                    f"Add at least {max(needed, 1)} more scored session(s) to unlock this insight."
+                )
+            else:
+                recommendations.append(
+                    "📚 Study method data is available, but no test scores have been "
+                    "recorded for any method yet. Add test scores to compare methods."
+                )
+        else:
+            best = find_best_method(qualified)
+            worst = qualified.sort_values("average_score").iloc[0]
+            rec = (
+                f"📚 Across your sessions with {_MIN_SESSIONS_FOR_BEST_CLAIM}+ results, "
+                f"{best['study_method']} is associated with your highest average score "
+                f"({best['average_score']:.1f}%)."
+            )
+            if best["study_method"] != worst["study_method"]:
+                rec += (
+                    f" {worst['study_method']} is currently your lowest-scoring method "
+                    f"({worst['average_score']:.1f}%) — consider whether a different "
+                    "approach or more practice time might help."
+                )
+            recommendations.append(rec)
+
+    # ── 5. STUDY TIME (TIME OF DAY) ──────────────────────────────────────────
+    if time_data.empty:
+        recommendations.append(
+            "🕐 No time-of-day data yet. "
+            "Make sure each session has a start time recorded."
+        )
+    else:
+        qualified_times = time_data[
+            (time_data["sessions"] >= _MIN_SESSIONS_FOR_BEST_CLAIM)
+            & time_data["average_score"].notna()
+        ]
+        if qualified_times.empty:
+            # Find how close the most-studied period is to the threshold
+            max_sessions = int(time_data["sessions"].max())
+            still_needed = max(_MIN_SESSIONS_FOR_BEST_CLAIM - max_sessions, 1)
+            recommendations.append(
+                f"🕐 Not enough data to identify your most effective study time "
+                f"(need {_MIN_SESSIONS_FOR_BEST_CLAIM} sessions per time period with a score). "
+                f"Add {still_needed} more scored session(s) to enable this insight."
+            )
+        else:
+            best_time = find_best_time(qualified_times)
+            rec = (
+                f"🕐 Based on {int(best_time['sessions'])} scored sessions, "
+                f"{best_time['time_period']} is associated with your best average score "
+                f"({best_time['average_score']:.1f}%). "
+            )
+            # Check whether sessions are actually well spread across periods
+            periods_with_data = int((time_data["sessions"] >= _MIN_SESSIONS_FOR_BEST_CLAIM).sum())
+            if periods_with_data == 1:
+                rec += (
+                    "You only have enough data for one time period so far — "
+                    "try studying at different times to see how they compare."
+                )
+            else:
+                rec += (
+                    "Scheduling important study blocks in this period may help, "
+                    "though other factors also influence performance."
+                )
+            recommendations.append(rec)
+
+    # ── 6. SUBJECT PERFORMANCE ───────────────────────────────────────────────
+    if not subject_data.empty:
+        # Only compare subjects that have ≥2 sessions with scores
+        scored_subjects = subject_data[
+            subject_data["average_score"].notna()
+            & (subject_data["sessions"] >= 2)
+        ]
+        if scored_subjects.empty:
+            if total_sessions >= 2:
+                recommendations.append(
+                    "📖 Record test scores for your subjects so StudyFlow can "
+                    "highlight which areas need the most attention."
+                )
+        elif len(scored_subjects) >= 2:
+            weakest = scored_subjects.sort_values("average_score").iloc[0]
+            strongest = scored_subjects.sort_values(
+                "average_score", ascending=False
+            ).iloc[0]
+            if weakest["subject"] != strongest["subject"]:
+                gap = float(strongest["average_score"]) - float(weakest["average_score"])
+                recommendations.append(
+                    f"📖 {weakest['subject']} has your lowest average score "
+                    f"({weakest['average_score']:.1f}%) across "
+                    f"{int(weakest['sessions'])} session(s). "
+                    f"There is a {gap:.1f}-point gap to your strongest subject "
+                    f"({strongest['subject']}, {strongest['average_score']:.1f}%). "
+                    "Dedicating extra revision time to the weaker subject may help narrow this gap."
+                )
+
+    # ── 7. OVERALL TEST SCORE ────────────────────────────────────────────────
+    if pd.isna(score):
+        recommendations.append(
+            "📈 No test scores recorded yet. "
+            "Adding a score after each session lets StudyFlow track your "
+            "performance trends over time."
+        )
+    else:
+        scored_count = int(df["test_score"].notna().sum())
+        if score >= 85:
+            recommendations.append(
+                f"📈 Strong overall performance: {score:.1f}% average across "
+                f"{scored_count} scored session(s). "
+                "Maintain consistency to keep this up."
+            )
+        elif score >= 75:
+            recommendations.append(
+                f"📈 Good performance: {score:.1f}% average across "
+                f"{scored_count} scored session(s). "
+                "Targeted practice on weaker topics could push this higher."
+            )
+        else:
+            recommendations.append(
+                f"📈 Average score is {score:.1f}% across "
+                f"{scored_count} scored session(s). "
+                "Prioritise active recall and practice problems over passive reading."
+            )
+
+    # ── 8. CONSISTENCY / STREAKS ─────────────────────────────────────────────
+    if streak_days >= 7:
+        recommendations.append(
+            f"🔥 Excellent consistency! You have studied {streak_days} day(s) in a row. "
+            "Maintaining a daily habit is one of the strongest predictors of "
+            "long-term learning — keep it up."
+        )
+    elif streak_days >= 3:
+        recommendations.append(
+            f"🔥 Good momentum: {streak_days} consecutive study days. "
+            "Aim to extend this streak — even a short 30-minute session on busy days "
+            "helps preserve the habit."
+        )
+    elif streak_days == 1:
+        recommendations.append(
+            "🔥 You studied today — great start. "
+            "Try to study again tomorrow to begin building a consistent streak."
+        )
+    elif total_sessions >= 3 and daily_data is not None and not daily_data.empty:
+        # Streak is 0 but there is data — suggest restarting
+        recommendations.append(
+            "🔥 Your study streak has lapsed. "
+            "Re-starting today is the fastest way to rebuild the habit. "
+            "Even a short session counts."
+        )
+
+    # ── 9. WEEKLY GOAL PROGRESS ──────────────────────────────────────────────
+    if weekly_goal_hours > 0:
+        remaining = max(weekly_goal_hours - weekly_studied_hours, 0.0)
+        pct = min(weekly_studied_hours / weekly_goal_hours * 100, 100)
+        if weekly_studied_hours >= weekly_goal_hours:
+            recommendations.append(
+                f"🎯 Weekly goal achieved! You have studied "
+                f"{weekly_studied_hours:.1f} h out of your "
+                f"{weekly_goal_hours:.1f} h target this week. "
+                "Consider setting a slightly higher goal next week to keep growing."
+            )
+        elif pct >= 70:
+            recommendations.append(
+                f"🎯 Almost there — {pct:.0f}% of your weekly goal completed "
+                f"({weekly_studied_hours:.1f} / {weekly_goal_hours:.1f} h). "
+                f"You need {remaining:.1f} more hour(s) to hit your target this week."
+            )
+        else:
+            recommendations.append(
+                f"🎯 Weekly progress: {pct:.0f}% "
+                f"({weekly_studied_hours:.1f} / {weekly_goal_hours:.1f} h). "
+                f"You still have {remaining:.1f} hour(s) to go this week."
+            )
 
     return recommendations
+
+
 
 
 if __name__ == "__main__":
